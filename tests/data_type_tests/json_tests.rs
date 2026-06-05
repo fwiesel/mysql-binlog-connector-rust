@@ -2,13 +2,30 @@
 #[cfg(test)]
 mod test {
 
+    use async_std::task::block_on;
     use mysql_binlog_connector_rust::{
         binlog_error::BinlogError,
         column::{column_value::ColumnValue, json::json_binary::JsonBinary},
     };
     use serial_test::serial;
 
-    use crate::runner::{assert::test::Assert, mock::test::Mock, test_runner::test::TestRunner};
+    use crate::runner::{
+        assert::test::Assert,
+        mock::test::Mock,
+        test_runner::test::{server_is_mariadb, TestRunner},
+    };
+
+    /// MariaDB accepts the `JSON` keyword for compatibility but stores
+    /// the column as `LONGTEXT`, so the binlog carries plain UTF-8 bytes
+    /// rather than the MySQL JSON binary format these tests expect.
+    /// Skip the JSON suite on MariaDB rather than failing the whole run.
+    fn server_emits_native_json() -> bool {
+        let url = crate::runner::env::test::Env::load_vars()
+            .get(crate::runner::env::test::Env::DB_URL)
+            .unwrap()
+            .clone();
+        !block_on(server_is_mariadb(&url)).unwrap_or(false)
+    }
 
     #[test]
     #[serial]
@@ -57,6 +74,10 @@ mod test {
     #[test]
     #[serial]
     fn test_mysql8_json_set_partial_update_with_holes() {
+        if !server_emits_native_json() {
+            eprintln!("skipping: MariaDB stores JSON as LONGTEXT");
+            return;
+        }
         let mut runner = TestRunner::new();
         let tb = format!("{}.{}", runner.default_db, runner.default_tb);
         let prepare_sqls = vec![format!("create table {} (j JSON)", tb)];
@@ -85,6 +106,10 @@ mod test {
     #[test]
     #[serial]
     fn test_mysql8_json_remove_partial_update_with_holes() {
+        if !server_emits_native_json() {
+            eprintln!("skipping: MariaDB stores JSON as LONGTEXT");
+            return;
+        }
         let mut runner = TestRunner::new();
         let tb = format!("{}.{}", runner.default_db, runner.default_tb);
         let prepare_sqls = vec![format!("create table {} (j JSON)", tb)];
@@ -110,6 +135,10 @@ mod test {
     #[test]
     #[serial]
     fn test_mysql8_json_remove_partial_update_with_holes_and_sparse_keys() {
+        if !server_emits_native_json() {
+            eprintln!("skipping: MariaDB stores JSON as LONGTEXT");
+            return;
+        }
         let mut runner = TestRunner::new();
         let tb = format!("{}.{}", runner.default_db, runner.default_tb);
         let prepare_sqls = vec![format!("create table {} (j JSON)", tb)];
@@ -138,6 +167,10 @@ mod test {
     #[test]
     #[serial]
     fn test_mysql8_json_replace_partial_update_with_holes() {
+        if !server_emits_native_json() {
+            eprintln!("skipping: MariaDB stores JSON as LONGTEXT");
+            return;
+        }
         let mut runner = TestRunner::new();
         let tb = format!("{}.{}", runner.default_db, runner.default_tb);
         let prepare_sqls = vec![format!("create table {} (j JSON)", tb)];
@@ -166,6 +199,10 @@ mod test {
     #[test]
     #[serial]
     fn test_mysql8_json_remove_array_value() {
+        if !server_emits_native_json() {
+            eprintln!("skipping: MariaDB stores JSON as LONGTEXT");
+            return;
+        }
         let mut runner = TestRunner::new();
         let tb = format!("{}.{}", runner.default_db, runner.default_tb);
         let prepare_sqls = vec![format!("create table {} (j JSON)", tb)];
@@ -191,6 +228,10 @@ mod test {
     #[test]
     #[serial]
     fn test_value_boundaries_are_honored() {
+        if !server_emits_native_json() {
+            eprintln!("skipping: MariaDB stores JSON as LONGTEXT");
+            return;
+        }
         let mut runner = TestRunner::new();
         let tb = format!("{}.{}", runner.default_db, runner.default_tb);
 
@@ -220,6 +261,10 @@ mod test {
     #[test]
     #[serial]
     fn test_null() {
+        if !server_emits_native_json() {
+            eprintln!("skipping test_null: MariaDB stores JSON as LONGTEXT");
+            return;
+        }
         let origin_values = vec!["null"];
         let runner = run_json_test(&origin_values, &vec![], false);
         assert_eq!(
@@ -507,6 +552,12 @@ mod test {
         expected_values: &Vec<&str>,
         quote: bool,
     ) -> TestRunner {
+        if !server_emits_native_json() {
+            eprintln!(
+                "skipping run_json_test: MariaDB stores JSON as LONGTEXT"
+            );
+            return TestRunner::new();
+        }
         let values = origin_values
             .clone()
             .into_iter()

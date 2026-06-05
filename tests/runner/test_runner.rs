@@ -236,4 +236,42 @@ pub(crate) mod test {
             Self::new()
         }
     }
+
+    /// Process-wide cache of the server's `SELECT VERSION()` string,
+    /// keyed by `db_url`. Tests run serially (`#[serial]`) and all hit
+    /// the same URL, so a single probe is sufficient; caching it avoids
+    /// spawning a fresh authenticated connection per test just to look
+    /// the value up again.
+    static SERVER_VERSION_CACHE: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<String, String>>,
+    > = std::sync::OnceLock::new();
+
+    /// Returns the raw `SELECT VERSION()` string. The format is
+    /// engine-specific: MySQL prints e.g. `8.0.31`, MariaDB prints
+    /// `10.11.18-MariaDB-ubu2204-log`. Cached per `db_url`.
+    pub async fn server_version_string(db_url: &str) -> Result<String, BinlogError> {
+        let cache = SERVER_VERSION_CACHE
+            .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+        if let Some(v) = cache.lock().unwrap().get(db_url) {
+            return Ok(v.clone());
+        }
+        let mut authenticator = Authenticator::new(db_url, 60, None)?;
+        let mut channel = authenticator.connect().await?;
+        let rows = CommandUtil::execute_query(&mut channel, "SELECT VERSION()").await?;
+        let v = rows
+            .first()
+            .and_then(|r| r.values.first().cloned())
+            .ok_or_else(|| BinlogError::ConnectError("empty VERSION() result".into()))?;
+        cache.lock().unwrap().insert(db_url.to_string(), v.clone());
+        Ok(v)
+    }
+
+    /// Returns whether the connected server is MariaDB rather than
+    /// MySQL. MariaDB advertises itself in the `SELECT VERSION()`
+    /// string (e.g. `10.11.18-MariaDB-…`); a substring match is enough
+    /// to distinguish the two engines for test-gating purposes.
+    pub async fn server_is_mariadb(db_url: &str) -> Result<bool, BinlogError> {
+        let v = server_version_string(db_url).await?;
+        Ok(v.to_ascii_lowercase().contains("mariadb"))
+    }
 }
