@@ -60,13 +60,40 @@ pub(crate) mod test {
                     .unwrap(),
             };
 
-            // run init sqls to prepare test dabase
+            // run init sqls to prepare test database. A freshly-started
+            // server may accept TCP and authenticate but still reject DDL
+            // for a few seconds; retry until the bootstrap succeeds rather
+            // than letting a transient error here propagate as a 60-second
+            // authenticator timeout in the first test that uses the
+            // runner.
             let prepare_sqls = vec![
                 "DROP DATABASE IF EXISTS ".to_string() + &runner.default_db,
                 "CREATE DATABASE ".to_string() + &runner.default_db,
             ];
             let test_sqls = vec![];
-            let _ = block_on(runner.execute_sqls(&prepare_sqls, &test_sqls));
+            // 60 attempts × 250 ms = 15 s. Generous enough for a cold-pull
+            // mysql:5.6 (which can take ~10 s to accept DDL after the
+            // mysqladmin-ping handshake), short enough to fail loudly on a
+            // genuinely broken server before any real test starts.
+            let mut last_err: Option<BinlogError> = None;
+            let mut bootstrapped = false;
+            for _ in 0..60 {
+                match block_on(runner.execute_sqls(&prepare_sqls, &test_sqls)) {
+                    Ok(_) => {
+                        bootstrapped = true;
+                        break;
+                    }
+                    Err(e) => {
+                        last_err = Some(e);
+                        std::thread::sleep(Duration::from_millis(250));
+                    }
+                }
+            }
+            assert!(
+                bootstrapped,
+                "TestRunner bootstrap (DROP/CREATE DATABASE) did not succeed after retries: {:?}",
+                last_err
+            );
 
             runner
         }
