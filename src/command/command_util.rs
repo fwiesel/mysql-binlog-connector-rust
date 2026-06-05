@@ -62,7 +62,12 @@ impl CommandUtil {
         }
         let binlog_filename = result_sets[0].values[0].clone();
         let binlog_position = result_sets[0].values[1].clone().parse::<u32>()?;
-        let gtid_set = result_sets[0].values[4].clone();
+        // MySQL >= 5.6 returns five columns from SHOW MASTER STATUS,
+        // the fifth being Executed_Gtid_Set. MariaDB returns only the
+        // first four (Maria GTID state lives in @@gtid_binlog_pos),
+        // so be liberal about an absent column rather than panicking
+        // with index out of bounds on the bootstrap connection.
+        let gtid_set = result_sets[0].values.get(4).cloned().unwrap_or_default();
         Ok((binlog_filename, binlog_position, gtid_set))
     }
 
