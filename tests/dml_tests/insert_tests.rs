@@ -1,10 +1,16 @@
 #[cfg(test)]
 mod test {
 
+    use async_std::task::block_on;
     use mysql_binlog_connector_rust::column::column_value::ColumnValue;
     use serial_test::serial;
 
-    use crate::runner::{assert::test::Assert, mock::test::Mock, test_runner::test::TestRunner};
+    use crate::runner::{
+        assert::test::Assert,
+        env::test::Env,
+        mock::test::Mock,
+        test_runner::test::{server_has_full_row_metadata, TestRunner},
+    };
 
     #[test]
     #[serial]
@@ -214,6 +220,17 @@ mod test {
     #[test]
     #[serial]
     fn test_insert_with_table_map_metadata() {
+        // The optional TableMap metadata block is only emitted when
+        // `binlog_row_metadata=FULL`, an 8.0+ option that defaults to
+        // MINIMAL. Skip on engines that don't supply it rather than
+        // asserting on absent fields.
+        let url = Env::load_vars().get(Env::DB_URL).unwrap().clone();
+        if !block_on(server_has_full_row_metadata(&url)).unwrap_or(false) {
+            eprintln!(
+                "skipping test_insert_with_table_map_metadata: server is not running with binlog_row_metadata=FULL"
+            );
+            return;
+        }
         let prepare_sqls = vec![
             "DROP DATABASE IF EXISTS test_table_map_metadata".to_string(),
             "CREATE DATABASE test_table_map_metadata".to_string(),

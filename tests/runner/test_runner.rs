@@ -274,4 +274,37 @@ pub(crate) mod test {
         let v = server_version_string(db_url).await?;
         Ok(v.to_ascii_lowercase().contains("mariadb"))
     }
+
+    /// Process-wide cache of `db_url` -> `binlog_row_metadata=FULL?`.
+    static FULL_ROW_METADATA_CACHE: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<String, bool>>,
+    > = std::sync::OnceLock::new();
+
+    /// Returns whether the server emits the optional TableMap-event
+    /// metadata (column names, signedness, ENUM/SET string values, …).
+    /// That happens only when `binlog_row_metadata=FULL`, which is an
+    /// 8.0+ option; older engines (and 8.0 with the default MINIMAL
+    /// setting) leave the fields empty. Used by tests to skip metadata
+    /// assertions on engines where they cannot succeed.
+    pub async fn server_has_full_row_metadata(db_url: &str) -> Result<bool, BinlogError> {
+        let cache = FULL_ROW_METADATA_CACHE
+            .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+        if let Some(&v) = cache.lock().unwrap().get(db_url) {
+            return Ok(v);
+        }
+        let mut authenticator = Authenticator::new(db_url, 60, None)?;
+        let mut channel = authenticator.connect().await?;
+        let rows = CommandUtil::execute_query(
+            &mut channel,
+            "SHOW GLOBAL VARIABLES LIKE 'binlog_row_metadata'",
+        )
+        .await?;
+        let v = rows
+            .first()
+            .and_then(|r| r.values.get(1))
+            .map(|v| v.eq_ignore_ascii_case("FULL"))
+            .unwrap_or(false);
+        cache.lock().unwrap().insert(db_url.to_string(), v);
+        Ok(v)
+    }
 }
