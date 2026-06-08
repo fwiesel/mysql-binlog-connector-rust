@@ -5,6 +5,7 @@ pub mod event_header;
 pub mod event_type;
 pub mod format_description_event;
 pub mod gtid_event;
+pub mod mariadb_gtid_event;
 pub mod previous_gtids_event;
 pub mod query_event;
 pub mod rotate_event;

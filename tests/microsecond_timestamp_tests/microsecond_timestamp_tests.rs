@@ -34,9 +34,10 @@ mod test {
     /// the server version. Verify they round-trip through the parser into
     /// plausible values.
     ///
-    /// MariaDB does not emit a `Gtid_event` in this layout (it uses its
-    /// own `MARIADB_GTID_EVENT`, currently parsed as `NotSupported`), so
-    /// this test no-ops there.
+    /// MariaDB does not emit a MySQL-style `Gtid_event` (it uses its own
+    /// `MARIADB_GTID_EVENT`, exposed as `EventData::MariadbGtid` and
+    /// covered by the dedicated MariaDB test below), so this test no-ops
+    /// on MariaDB.
     #[test]
     #[serial]
     fn gtid_event_carries_commit_timestamps_at_microsecond_precision() {
@@ -199,6 +200,59 @@ mod test {
                 us < 1_000_000,
                 "microsecond fraction must be < 1_000_000, got {us}"
             );
+        }
+    }
+
+    /// MariaDB-specific: every transaction emits a `Gtid_log_event`
+    /// (event type 162) with `(domain_id, server_id, sequence_number)`.
+    /// `sequence_number` is lifetime-monotonic per `(domain, server)`
+    /// writer (it does **not** reset on `Rotate_event`, unlike MySQL's
+    /// similarly-named field). Verify three back-to-back transactions
+    /// produce strictly-increasing seq_nos and a well-formed `gtid`
+    /// rendering. No-ops on MySQL.
+    #[test]
+    #[serial]
+    fn mariadb_gtid_event_exposes_lifetime_monotonic_seq_no() {
+        let mut runner = TestRunner::new();
+
+        let prepare = vec![Mock::default_create_sql()];
+        let values = Mock::default_insert_values();
+        let test_sqls = vec![
+            Mock::insert_sql(&values[0..1]),
+            Mock::insert_sql(&values[1..2]),
+            Mock::insert_sql(&values[2..3]),
+        ];
+        runner.execute_sqls_and_get_binlogs(&prepare, &test_sqls);
+
+        if runner.mariadb_gtid_events.is_empty() {
+            eprintln!(
+                "no MariaDB Gtid_log_event captured -- likely MySQL; skipping MariaDB-only assertions"
+            );
+            return;
+        }
+
+        let seqs: Vec<u64> = runner
+            .mariadb_gtid_events
+            .iter()
+            .map(|e| e.sequence_number)
+            .collect();
+
+        for w in seqs.windows(2) {
+            assert!(
+                w[0] < w[1],
+                "MariaDB seq_no must be strictly increasing across transactions: {} >= {}",
+                w[0],
+                w[1]
+            );
+        }
+
+        for ev in &runner.mariadb_gtid_events {
+            assert_eq!(
+                ev.gtid,
+                format!("{}-{}-{}", ev.domain_id, ev.server_id, ev.sequence_number),
+                "gtid rendering must match {{domain}}-{{server}}-{{seq}}"
+            );
+            assert!(ev.server_id != 0, "server_id must be propagated from the event header");
         }
     }
 }

@@ -2,7 +2,8 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     delete_rows_event::DeleteRowsEvent, format_description_event::FormatDescriptionEvent,
-    gtid_event::GtidEvent, previous_gtids_event::PreviousGtidsEvent, query_event::QueryEvent,
+    gtid_event::GtidEvent, mariadb_gtid_event::MariadbGtidEvent,
+    previous_gtids_event::PreviousGtidsEvent, query_event::QueryEvent,
     rotate_event::RotateEvent, rows_query_event::RowsQueryEvent, table_map_event::TableMapEvent,
     transaction_payload_event::TransactionPayloadEvent, update_rows_event::UpdateRowsEvent,
     write_rows_event::WriteRowsEvent, xa_prepare_event::XaPrepareEvent, xid_event::XidEvent,
@@ -14,6 +15,7 @@ pub enum EventData {
     FormatDescription(FormatDescriptionEvent),
     PreviousGtids(PreviousGtidsEvent),
     Gtid(GtidEvent),
+    MariadbGtid(MariadbGtidEvent),
     Query(QueryEvent),
     TableMap(TableMapEvent),
     WriteRows(WriteRowsEvent),

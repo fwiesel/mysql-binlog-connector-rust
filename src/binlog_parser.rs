@@ -3,7 +3,8 @@ use crate::{
     constants,
     event::{
         delete_rows_event::DeleteRowsEvent, event_data::*, event_header::EventHeader,
-        gtid_event::GtidEvent, previous_gtids_event::PreviousGtidsEvent, query_event::QueryEvent,
+        gtid_event::GtidEvent, mariadb_gtid_event::MariadbGtidEvent,
+        previous_gtids_event::PreviousGtidsEvent, query_event::QueryEvent,
         rotate_event::RotateEvent, rows_query_event::RowsQueryEvent,
         table_map_event::TableMapEvent, transaction_payload_event::TransactionPayloadEvent,
         update_rows_event::UpdateRowsEvent, write_rows_event::WriteRowsEvent,
@@ -60,6 +61,12 @@ impl BinlogParser {
             )),
 
             EventType::Gtid => Ok((header, EventData::Gtid(GtidEvent::parse(&mut cursor)?))),
+
+            EventType::MariadbGtid => {
+                let event_data =
+                    MariadbGtidEvent::parse(&mut cursor, header.server_id)?;
+                Ok((header, EventData::MariadbGtid(event_data)))
+            }
 
             EventType::Query => Ok((header, EventData::Query(QueryEvent::parse(&mut cursor)?))),
 
@@ -121,6 +128,11 @@ impl BinlogParser {
 
             EventType::HeartBeat => Ok((header, EventData::HeartBeat)),
 
+            // EventType::MariadbGtidList (event type 163) is the MariaDB
+            // counterpart of MySQL's PreviousGtids, written once at
+            // binlog start to advertise the executed GTID set. We don't
+            // parse it yet; it falls through to NotSupported below until
+            // a follow-up exposes the GTID list to consumers.
             _ => Ok((header, EventData::NotSupported)),
         }
     }
